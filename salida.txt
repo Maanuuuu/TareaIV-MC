@@ -1,0 +1,15 @@
+Modelo de Programación Lineal
+Función Objetivo:
+Maximizar: 3.0*x1 + 2.0*x2
+Sujeto a:
+2.0*x1 + 3.0*x2 <= 17.0
+4.0*x1 + 1.0*x2 <= 15.0
+
+Resultados:
+
+🧮 Estado: Optimal
+x1 = 3
+x2 = 4
+
+💰 Valor óptimo Z = 16.0
+
