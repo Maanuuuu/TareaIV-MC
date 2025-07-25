@@ -1,6 +1,7 @@
 import pulp
 import numpy as np
 
+
 class ModeloPL:
     def __init__(self):
         self.problema = None
@@ -13,13 +14,16 @@ class ModeloPL:
         self.tipos_restriccion = []
         self.coef_objetivo = []
         self.historial_resultados = []
-        self.contador_cortes = 0  
+        self.contador_cortes = 0
+        self.max_cortes = 10  # Para evitar ciclos infinitos
 
-
-    def solicitar_numero(self, mensaje, tipo=float):
+    def solicitar_numero(self, mensaje, tipo=float, minimo=None):
         while True:
             try:
                 valor = tipo(input(mensaje))
+                if minimo is not None and valor < minimo:
+                    print(f"Por favor ingrese un valor mayor o igual a {minimo}.")
+                    continue
                 return valor
             except ValueError:
                 print("Entrada inválida. Intente nuevamente.")
@@ -39,30 +43,31 @@ class ModeloPL:
             else:
                 print("Opción inválida. Escriba 1 o 2.")
 
-        self.num_variables = self.solicitar_numero("Ingrese el número de variables (mínimo 1): ", int)
-        self.num_restricciones = self.solicitar_numero("Ingrese el número de restricciones (mínimo 1): ", int)
+        self.num_variables = self.solicitar_numero("Ingrese el número de variables (mínimo 1): ", int, 1)
+        self.num_restricciones = self.solicitar_numero("Ingrese el número de restricciones (mínimo 1): ", int, 1)
 
         print("\nIngrese los coeficientes de la función objetivo:")
         for i in range(self.num_variables):
-            coef = self.solicitar_numero(f"Coeficiente de x{i+1}: ")
+            coef = self.solicitar_numero(f"Coeficiente de x{i+1}: ", float)
             self.coef_objetivo.append(coef)
 
         print("\nIngrese cada restricción:")
         for r in range(self.num_restricciones):
             fila = []
+            print(f"Restricción {r+1}:")
             for i in range(self.num_variables):
-                coef = self.solicitar_numero(f"Coef x{i+1} en restricción {r+1}: ")
+                coef = self.solicitar_numero(f"  Coeficiente para x{i+1}: ", float)
                 fila.append(coef)
             self.matriz_restricciones.append(fila)
 
             while True:
-                signo = input("Tipo de restricción (<=, >=, =): ").strip()
+                signo = input("  Tipo de restricción (<=, >=, =): ").strip()
                 if signo in ("<=", ">=", "="):
                     self.tipos_restriccion.append(signo)
                     break
-                print("Entrada inválida. Escriba '<=', '>=', o '='.")
+                print("  Entrada inválida. Escriba '<=', '>=', o '='.")
 
-            lado_derecho = self.solicitar_numero("Lado derecho de la restricción: ")
+            lado_derecho = self.solicitar_numero("  Lado derecho de la restricción: ", float)
             self.vector_lado_derecho.append(lado_derecho)
 
     def construir_modelo(self):
@@ -94,7 +99,10 @@ class ModeloPL:
     def mostrar_solucion(self):
         resultado = f"\n🧮 Estado: {pulp.LpStatus[self.problema.status]}\n"
         for var in self.variables:
-            resultado += f"{var.name} = {round(var.varValue, 4)}\n"
+            val = var.varValue if var.varValue is not None else 0
+            resultado += f"{var.name} = {int(round(val))}\n"  # Mostrar como entero redondeado
+        z_val = pulp.value(self.problema.objective)
+        resultado += f"\n💰 Valor óptimo Z = {round(z_val, 4)}\n"
         print(resultado)
         self.historial_resultados.append(resultado)
 
@@ -108,28 +116,38 @@ class ModeloPL:
     def agregar_corte_gomory(self, tableau):
         filas, columnas = tableau.shape
         for i in range(filas):
-            if not np.isclose(tableau[i, -1], np.floor(tableau[i, -1])):
-                corte = np.floor(tableau[i, -1]) - tableau[i, -1]
+            parte_fracc = tableau[i, -1] - np.floor(tableau[i, -1])
+            if parte_fracc > 1e-5:  # considerar solo fracciones significativas
+                corte_val = -parte_fracc
+                corte_expr = pulp.LpAffineExpression()  # <--- Aquí el cambio
                 for j in range(columnas - 1):
-                    if not np.isclose(tableau[i, j], 0):
-                        corte += (tableau[i, j] - np.floor(tableau[i, j])) * self.variables[j]
+                    coef_fracc = tableau[i, j] - np.floor(tableau[i, j])
+                    if coef_fracc > 1e-5:
+                        corte_expr += coef_fracc * self.variables[j]
                 nombre_corte = f"Corte_Gomory_f{i}_n{self.contador_cortes}"
-                self.problema += corte <= 0, nombre_corte
+                self.problema += corte_expr <= corte_val, nombre_corte
                 print(f"➕ {nombre_corte} agregado")
                 self.contador_cortes += 1
                 return True
         return False
+
 
     def resolver_con_cortes(self):
         self.problema.solve(pulp.PULP_CBC_CMD(msg=False))
         self.mostrar_solucion()
         tableau = self.obtener_tableau_simulado()
 
-        while True:
+        iteracion = 0
+        while iteracion < self.max_cortes:
             if not self.agregar_corte_gomory(tableau):
+                print("No se encontraron más cortes válidos.")
                 break
             self.problema.solve(pulp.PULP_CBC_CMD(msg=False))
             self.mostrar_solucion()
+            iteracion += 1
+
+        if iteracion == self.max_cortes:
+            print(f"⚠️ Se alcanzó el máximo de {self.max_cortes} cortes sin obtener solución entera.")
 
     def guardar_en_archivo(self):
         nombre_archivo = input("\n¿Desea guardar el resultado? (s/n): ").strip().lower()
@@ -148,6 +166,7 @@ class ModeloPL:
                 for linea in self.historial_resultados:
                     f.write(linea + "\n")
             print(f"✅ Resultados guardados en: {ruta}")
+
 
 if __name__ == "__main__":
     modelo = ModeloPL()
